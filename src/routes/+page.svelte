@@ -155,6 +155,17 @@
     await loadClips();
   }
 
+  async function renameClip(clip: Clip) {
+    const stem = clip.filename.replace(/\.[^.]+$/, '');
+    const newName = prompt('Rename clip:', stem);
+    if (!newName || newName === stem) return;
+    try {
+      await invoke('rename_clip', { id: clip.id, newName });
+      notify('Renamed');
+      await loadClips();
+    } catch (e: any) { notify('Rename failed', 'err'); }
+  }
+
   async function deleteFromR2(clip: Clip) {
     await invoke('delete_from_r2', { id: clip.id });
     notify('Removed from R2');
@@ -173,8 +184,7 @@
 
     try {
       const path = await invoke<string>('transcode_for_preview', { input: clip.path });
-      const bytes = await invoke<number[]>('read_video_bytes', { path });
-      previewSrc = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'video/mp4' }));
+      previewSrc = `asset://localhost/${encodeURIComponent(path)}`;
     } catch (e) {
       console.error(e);
       notify('Preview failed', 'err');
@@ -184,7 +194,6 @@
   }
 
   function closeEditor() {
-    if (previewSrc.startsWith('blob:')) URL.revokeObjectURL(previewSrc);
     previewSrc = '';
     editClip = null;
     tab = 'library';
@@ -317,7 +326,7 @@
                   <div class="clip-overlay"><span>Edit</span></div>
                 </div>
                 <div class="clip-meta">
-                  <h4 title={clip.filename}>{clip.filename}</h4>
+                  <h4 title={clip.filename} ondblclick={() => renameClip(clip)} style="cursor:text">{clip.filename}</h4>
                   <p>{timeAgo(clip.created_at)}</p>
                 </div>
                 <div class="clip-actions">
@@ -338,6 +347,9 @@
                   <button onclick={() => deleteClip(clip)} title="Delete" class="del">
                     <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                   </button>
+                  <button onclick={() => renameClip(clip)} title="Rename">
+                    <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                  </button>
                 </div>
               </article>
             {/each}
@@ -356,7 +368,7 @@
           <ul class="rows">
             {#each uploadedClips as clip}
               <li>
-                <div><strong>{clip.filename}</strong>{#if clip.expiry_date}<span class="meta-tag">expires {new Date(clip.expiry_date).toLocaleDateString()}</span>{/if}</div>
+                <div><strong ondblclick={() => renameClip(clip)} style="cursor:text">{clip.filename}</strong>{#if clip.expiry_date}<span class="meta-tag">expires {new Date(clip.expiry_date).toLocaleDateString()}</span>{/if}</div>
                 <button class="primary" onclick={() => copyLink(clip)}>Copy Link</button>
               </li>
             {/each}
@@ -375,7 +387,7 @@
           <ul class="rows">
             {#each permanentClips as clip}
               <li>
-                <div><strong>{clip.filename}</strong></div>
+                <div><strong ondblclick={() => renameClip(clip)} style="cursor:text">{clip.filename}</strong></div>
                 <div class="row-buttons">
                   <button onclick={() => copyLink(clip)}>Copy Link</button>
                   <button class="del" onclick={() => deleteFromR2(clip)}>Delete from R2</button>
@@ -389,7 +401,7 @@
       {#if tab === 'editor' && editClip}
         <div class="editor">
           <div class="editor-top">
-            <button class="back" onclick={() => { tab='library'; editClip=null; if (previewSrc.startsWith('blob:')) URL.revokeObjectURL(previewSrc); previewSrc=''; }}>← Back</button>
+            <button class="back" onclick={closeEditor}>← Back</button>
             <h2>{editClip.filename}</h2>
             <div class="spacer"></div>
             <button class="ghost" onclick={() => exportTrim('overwrite')} disabled={!previewSrc} title="Replace original with trim">

@@ -19,7 +19,7 @@
 
 ## Preview
 
-![Klyppd UI Preview](https://cdn.brookerslyn.space/Screenshot_20260522-092943.png)
+![Klyppd UI Preview](https://cdn.brookerslyn.space/klyppd%20preview1)
 
 ---
 
@@ -116,7 +116,15 @@ You also need a Rust toolchain (≥ 1.77) and Node.js (≥ 18) to build from sou
 
 ## Installation
 
-> **AUR packages are coming.** For now, build from source.
+### AUR (Arch Linux)
+
+```bash
+# Recommended — prebuilt binary, installs in seconds
+yay -S klyppd-bin
+
+# Or build from latest main (takes a few minutes)
+yay -S klyppd-git
+```
 
 ### From source
 
@@ -129,33 +137,14 @@ npm run tauri build -- --bundles deb
 
 This produces a `.deb` at `src-tauri/target/release/bundle/deb/klyppd_0.1.0_amd64.deb`.
 
-#### Install on Arch via the bundled PKGBUILD
-
-The repo ships a `klyppd-bin` PKGBUILD that wraps the local `.deb` into an Arch package — same format the AUR will eventually serve.
-
-```bash
-cd packaging/aur/klyppd-bin
-makepkg -si
-```
-
-After install, run from anywhere:
-
-```bash
-klyppd
-```
-
-It also shows up in rofi / wofi / your app launcher with the K icon.
-
 #### Install on Debian / Ubuntu
 
 ```bash
 sudo dpkg -i src-tauri/target/release/bundle/deb/klyppd_0.1.0_amd64.deb
-sudo apt -f install      # if any deps are missing
+sudo apt -f install
 ```
 
-#### Run without packaging
-
-If you just want to try it without installing system-wide:
+#### Run without installing
 
 ```bash
 ./src-tauri/target/release/klyppd
@@ -169,7 +158,7 @@ npm run tauri dev
 
 ### Faster builds (recommended)
 
-The release build links a large binary, which is slow on the default linker. Install [mold](https://github.com/rui314/mold):
+Install [mold](https://github.com/rui314/mold) for ~50% faster linking:
 
 ```bash
 sudo pacman -S mold      # Arch
@@ -177,12 +166,6 @@ sudo apt install mold    # Debian/Ubuntu
 ```
 
 The repo's `src-tauri/.cargo/config.toml` is preconfigured to use it.
-
-### Coming soon
-
-- AUR (`klyppd-bin`, `klyppd`, `klyppd-git`)
-- Prebuilt AppImage releases
-- Support for additional Linux distributions
 
 ---
 
@@ -295,9 +278,12 @@ Contributions are welcome. Whether you want to:
 
 ## Support
 
-Support options and donation links will be added soon.
+If Klyppd saved you a few clicks (or a few hundred), you can support the project here:
 
-If you enjoy the project, **starring the repository** helps a lot.
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/brookerslyn)
+[![PayPal](https://img.shields.io/badge/PayPal-donate-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/brookerslyn)
+
+If you can't donate, **starring the repository** helps a ton too.
 
 ---
 

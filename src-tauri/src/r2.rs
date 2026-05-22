@@ -83,19 +83,17 @@ fn pretty_date(date: &str) -> String {
 }
 
 fn build_embed(video: &str, thumb: &str, title: &str, date: &str, size: &str, w: u32, h: u32) -> String {
-    let site = format!("klyppd · {size}");
-    let desc = if date.is_empty() {
-        "Clipped with Klyppd".into()
-    } else {
-        format!("Clipped with Klyppd · {date}")
-    };
+    let site = format!("Clipped with Klyppd · {size}");
+    let full_title = if date.is_empty() { title.to_string() } else { format!("{title} ({date})") };
+    let desc = "Clipped with Klyppd";
+    let repo = "https://github.com/brookerslyn/klyppd";
 
     format!(r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<title>{title} — klyppd</title>
+<title>{full_title} — klyppd</title>
 <meta property="og:type" content="video.other">
-<meta property="og:title" content="{title}">
+<meta property="og:title" content="{full_title}">
 <meta property="og:description" content="{desc}">
 <meta property="og:site_name" content="{site}">
 <meta property="og:image" content="{thumb}">
@@ -107,7 +105,7 @@ fn build_embed(video: &str, thumb: &str, title: &str, date: &str, size: &str, w:
 <meta property="og:video:width" content="{w}">
 <meta property="og:video:height" content="{h}">
 <meta name="twitter:card" content="player">
-<meta name="twitter:title" content="{title}">
+<meta name="twitter:title" content="{full_title}">
 <meta name="twitter:description" content="{desc}">
 <meta name="twitter:image" content="{thumb}">
 <meta name="twitter:player" content="{video}">
@@ -118,24 +116,21 @@ fn build_embed(video: &str, thumb: &str, title: &str, date: &str, size: &str, w:
 <meta name="theme-color" content="#9accfa">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#0b0f12;color:#e0e2e8;font-family:-apple-system,'Inter','Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;font-size:14px}}
-.head{{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;font-size:12px;color:#8c9198}}
-.brand{{color:#9accfa;font-weight:600}}
-.size{{color:#42474e}}
+body{{background:#0b0f12;color:#e0e2e8;font-family:-apple-system,'Inter','Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px}}
 .wrap{{max-width:1100px;width:100%}}
 video{{width:100%;border-radius:8px;background:#000;display:block;box-shadow:0 8px 30px rgba(0,0,0,.5)}}
 .title{{margin-top:16px;font-size:22px;font-weight:600;letter-spacing:-.01em}}
 .sub{{margin-top:6px;font-size:13px;color:#8c9198}}
 .foot{{margin-top:18px;padding-top:14px;border-top:1px solid #1c2024;font-size:11px;color:#42474e;display:flex;justify-content:space-between}}
-.foot a{{color:#9accfa;text-decoration:none}}
+a{{color:#9accfa;text-decoration:none;font-size:11px}}
+a:hover{{text-decoration:underline}}
 </style></head>
 <body>
 <div class="wrap">
-<div class="head"><span class="brand">klyppd</span><span class="size">{size}</span></div>
 <video src="{video}" controls autoplay playsinline poster="{thumb}"></video>
-<div class="title">{title}</div>
-<div class="sub">{desc}</div>
-<div class="foot"><span>{date}</span><span>Clipped with <a href="#">Klyppd</a></span></div>
+<div class="title">{full_title}</div>
+<div class="sub">{desc} · {size}</div>
+<div class="foot"><span>{date}</span><a href="{repo}">Klyppd</a></div>
 </div>
 </body></html>"##)
 }

@@ -60,6 +60,24 @@ fn delete_clip(state: tauri::State<AppState>, id: String) -> Result<(), String> 
     state.db.lock().unwrap().delete_clip(&id).map_err(err)
 }
 
+#[tauri::command]
+fn rename_clip(state: tauri::State<AppState>, id: String, new_name: String) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    let clip = db.get_clip(&id).map_err(err)?;
+
+    let old_path = Path::new(&clip.path);
+    let ext = old_path.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
+    let new_filename = if new_name.ends_with(&format!(".{ext}")) {
+        new_name.clone()
+    } else {
+        format!("{new_name}.{ext}")
+    };
+    let new_path = old_path.parent().unwrap_or(Path::new(".")).join(&new_filename);
+
+    std::fs::rename(old_path, &new_path).map_err(err)?;
+    db.rename_clip(&id, &new_filename, &new_path.to_string_lossy()).map_err(err)
+}
+
 // Recording -------------------------------------------------------------------
 
 #[tauri::command]
@@ -108,6 +126,11 @@ async fn crop_clip(input: String, output: String, x: u32, y: u32, w: u32, h: u32
 
 #[tauri::command]
 async fn transcode_for_preview(input: String) -> Result<String, String> {
+    // If it's already mp4 with aac audio, skip entirely — serve the original
+    if input.ends_with(".mp4") && has_aac_audio(&input) {
+        return Ok(input);
+    }
+
     let dir = std::env::temp_dir().join(PREVIEW_DIR);
     std::fs::create_dir_all(&dir).map_err(err)?;
     let stem = Path::new(&input).file_stem().unwrap_or_default().to_string_lossy();
@@ -116,7 +139,6 @@ async fn transcode_for_preview(input: String) -> Result<String, String> {
         return Ok(out.to_string_lossy().into());
     }
 
-    // webkit2gtk can't decode opus-in-mp4, force AAC. Stream-copy video for speed.
     let ok = std::process::Command::new("ffmpeg")
         .args(["-y", "-i", &input, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"])
         .arg(&out)
@@ -126,6 +148,14 @@ async fn transcode_for_preview(input: String) -> Result<String, String> {
 
     if !ok { return Err("ffmpeg transcode failed".into()); }
     Ok(out.to_string_lossy().into())
+}
+
+fn has_aac_audio(path: &str) -> bool {
+    std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", path])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "aac")
+        .unwrap_or(false)
 }
 
 // R2 -------------------------------------------------------------------------
@@ -586,7 +616,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_clips, get_clips_by_folder, get_uploaded_clips,
-            update_clip_tags, update_clip_folder, delete_clip,
+            update_clip_tags, update_clip_folder, delete_clip, rename_clip,
             start_replay_buffer, stop_replay_buffer, save_replay,
             start_recording, stop_recording, get_recording_state,
             trim_clip, crop_clip, transcode_for_preview,

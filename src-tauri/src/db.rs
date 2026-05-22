@@ -121,6 +121,14 @@ impl Database {
         self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
         Ok(())
     }
+
+    pub fn rename_clip(&self, id: &str, filename: &str, path: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE clips SET filename = ?1, path = ?2 WHERE id = ?3",
+            params![filename, path, id],
+        )?;
+        Ok(())
+    }
 }
 
 fn collect<P: Params>(stmt: &mut Statement, params: P) -> rusqlite::Result<Vec<Clip>> {

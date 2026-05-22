@@ -1,0 +1,22 @@
+/* klyppd Default Theme
+ * Copy this to ~/.config/klyppd/theme.css and customize
+ *
+ * Available CSS variables:
+ * --bg-primary: Main background
+ * --bg-secondary: Cards, panels
+ * --bg-topbar: Top status bar
+ * --text-primary: Main text color
+ * --text-secondary: Muted text
+ * --accent: Accent/highlight color
+ * --border-color: Borders and dividers
+ */
+
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-topbar: #0f3460;
+  --text-primary: #eeeeee;
+  --text-secondary: #aaaaaa;
+  --accent: #e94560;
+  --border-color: #333333;
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "klyppd",
+  "version": "0.1.0",
+  "identifier": "com.brookerslyn.klyppd",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "klyppd",
+        "width": 1100,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 500,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "requireLiteralLeadingDot": false,
+          "allow": ["$HOME/**/*", "/tmp/**/*"]
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "shortDescription": "Medal-style clip manager for Linux",
+    "longDescription": "Klyppd is a lightweight clipping and recording tool for Linux. It uses gpu-screen-recorder for low-overhead capture, ships a built-in trimmer, and uploads to your own Cloudflare R2 with rich Discord/Twitter embed pages.",
+    "category": "Utility",
+    "homepage": "https://github.com/brookerslyn/klyppd",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "gpu-screen-recorder",
+          "ffmpeg",
+          "libwebkit2gtk-4.1-0",
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-libav"
+        ],
+        "section": "video"
+      }
+    }
+  }
+}

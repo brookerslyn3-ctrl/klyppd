@@ -1,12 +1,10 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/k-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/k-light.png">
-  <img alt="Klyppd" src="assets/k-light.png" width="120">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.png">
+  <img alt="Klyppd" src="assets/logo-light.png" width="320">
 </picture>
-
-# Klyppd
 
 **A lightweight, performance-focused clipping and recording app built for speed, customization, and seamless sharing.**
 

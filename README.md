@@ -19,7 +19,7 @@
 
 ## Preview
 
-![Klyppd UI Preview](https://cdn.brookerslyn.space/klyppd%20preview1)
+![Klyppd UI Preview](https://cdn.brookerslyn.space/klyppd%20preview1.png)
 
 ---
 

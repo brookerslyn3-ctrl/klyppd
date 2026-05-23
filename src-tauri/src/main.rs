@@ -6,10 +6,11 @@ use std::os::unix::net::UnixStream;
 const SOCKET: &str = "/tmp/klyppd.sock";
 
 fn main() {
-    // Disable webkit2gtk's dmabuf renderer — broken on Hyprland and some Wayland setups.
-    // Users can override by setting the env var themselves.
+    // Workarounds for webkit2gtk on Wayland — discovered through painful trial and error.
+    // DMABUF renderer causes "Error 71 (Protocol error)" on Hyprland.
+    // GTK overlay scrollbar is hideous and unstyleable from CSS.
+    // Adwaita:dark gives us slightly less ugly fallback widgets.
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        // SAFETY: single-threaded at this point (before Tauri spawns anything).
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1"); }
     }
     // Kill GTK scrollbar entirely — we use mousewheel/trackpad only

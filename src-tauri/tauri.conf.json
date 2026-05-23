@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "klyppd",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.brookerslyn.klyppd",
   "build": {
     "beforeDevCommand": "npm run dev",

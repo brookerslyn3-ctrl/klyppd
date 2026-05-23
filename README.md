@@ -19,7 +19,7 @@
 
 ## Preview
 
-![Klyppd UI Preview](https://cdn.brookerslyn.space/klyppd%20preview1.png)
+![Klyppd UI Preview](https://cdn.brookerslyn.space/Klyppd.png)
 
 ---
 
@@ -199,9 +199,29 @@ Add a lifecycle rule on the `t/` prefix in your bucket settings to auto-delete t
 
 ### Hotkeys
 
-Klyppd is triggered through external keybinds that talk to the running app. Wire them up in your window manager / DE.
+Klyppd uses **evdev** (`/dev/input/`) for global hotkeys — they work on **any compositor** (Hyprland, GNOME, KDE, Sway, X11) without any window manager configuration.
 
-#### Hyprland
+#### Setup
+
+Add your user to the `input` group (one-time, requires logout):
+
+```bash
+sudo usermod -aG input $USER
+```
+
+Then configure hotkeys in **Settings → Hotkeys** inside the app. Any key combo works:
+
+| Action | Default | Examples |
+|---|---|---|
+| Save replay | `Alt+R` | `F9`, `Super+C`, `Ctrl+Shift+S` |
+| Toggle recording | `Alt+Shift+R` | `F10`, `Super+R` |
+| Toggle buffer | `Alt+F8` | `F8`, `Super+B` |
+
+Hotkeys work even when a fullscreen game has focus.
+
+#### Fallback: compositor keybinds (optional)
+
+If you prefer not to use the `input` group, you can bind through your compositor instead. These talk to the running app via a Unix socket (`/tmp/klyppd.sock`):
 
 ```ini
 # hyprland.conf

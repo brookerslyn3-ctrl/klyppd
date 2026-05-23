@@ -65,9 +65,19 @@ pub fn load() -> Result<AppSettings, Error> {
         save(&s)?;
         return Ok(s);
     }
-    // FIXME: if user hand-edits the JSON and adds a typo, this silently falls back to defaults
-    // should probably warn or show a toast in the UI
-    Ok(serde_json::from_str(&std::fs::read_to_string(p)?)?)
+    let contents = std::fs::read_to_string(&p)?;
+    match serde_json::from_str(&contents) {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            eprintln!("klyppd: failed to parse {}: {e}", p.display());
+            eprintln!("klyppd: using default settings; fix the JSON or delete the file to regenerate");
+            let backup = p.with_extension("json.bak");
+            std::fs::copy(&p, &backup).ok();
+            let s = AppSettings::default();
+            save(&s)?;
+            Ok(s)
+        }
+    }
 }
 
 pub fn save(settings: &AppSettings) -> Result<(), Error> {

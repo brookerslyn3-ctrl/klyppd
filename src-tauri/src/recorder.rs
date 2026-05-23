@@ -90,21 +90,40 @@ impl Drop for Recorder {
 
 fn base_command(s: &AppSettings) -> Command {
     let mut cmd = Command::new("gpu-screen-recorder");
-    cmd.args(["-w", "portal"])
+
+    let capture_target = detect_capture_target();
+    cmd.args(["-w", &capture_target])
        .args(["-f", &s.fps.to_string()])
        .args(["-k", &s.codec])
        .args(["-ac", &s.audio_codec]);
-
-    // FIXME: portal capture doesn't work on some wlroots compositors (labwc, river)
-    // might need to fall back to monitor name detection via `gpu-screen-recorder --list-monitors`
-
-    // TODO: support multiple audio sources (game + mic) via pipe-separated -a args
-    // e.g. "-a" "default_output|default_input"
 
     if !s.audio_source.is_empty() {
         cmd.args(["-a", &s.audio_source]);
     }
     cmd
+}
+
+fn detect_capture_target() -> String {
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+        || std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false);
+
+    if is_wayland {
+        return "portal".into();
+    }
+
+    if let Ok(out) = Command::new("gpu-screen-recorder")
+        .arg("--list-monitors")
+        .output()
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Some(line) = text.lines().find(|l| !l.is_empty() && !l.starts_with(' ')) {
+            if let Some(monitor) = line.split_whitespace().next() {
+                return monitor.to_string();
+            }
+        }
+    }
+
+    "screen".into()
 }
 
 fn send_signal(child: &Child, signal: i32) {

@@ -217,9 +217,13 @@
     }
 
     async function deleteClip(clip: Clip) {
-        await invoke("delete_clip", { id: clip.id });
-        notify("Deleted");
-        await loadClips();
+        try {
+            await invoke("delete_clip", { id: clip.id });
+            notify("Deleted");
+            await loadClips();
+        } catch (e: any) {
+            notify("Delete failed", "err");
+        }
     }
 
     async function renameClip(clip: Clip) {
@@ -1102,9 +1106,7 @@
                             />
                         </div>
                         <p class="cfg-hint">
-                            → configured via <code
-                                >~/.config/klyppd/save-replay.sh</code
-                            >
+                            → uses evdev for global hotkeys; add your user to the <code>input</code> group
                         </p>
                     </section>
                     <section class="cfg-section">

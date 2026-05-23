@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::time::SystemTime;
 
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::{Builder, Region};
@@ -9,20 +8,8 @@ use aws_sdk_s3::Client;
 use crate::db::Clip;
 use crate::settings::AppSettings;
 
-const ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-const ID_LEN: usize = 6;
-
 fn short_id() -> String {
-    let mut n = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-    let mut id = String::with_capacity(ID_LEN);
-    for _ in 0..ID_LEN {
-        id.push(ID_CHARSET[(n % ID_CHARSET.len() as u64) as usize] as char);
-        n = n.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-    }
-    id
+    uuid::Uuid::new_v4().to_string()[..8].to_string()
 }
 
 fn client(s: &AppSettings) -> Client {
@@ -184,7 +171,8 @@ pub async fn upload(s: &AppSettings, clip: &Clip, permanent: bool) -> R2Result<S
     };
 
     let video_url = format!("{domain}/{video_key}");
-    let html = build_embed(&video_url, &thumb_url, &title, &pretty_date(&date), &fmt_bytes(size), 1280, 720);
+    let (vid_w, vid_h) = get_video_resolution(&clip.path).unwrap_or((1280, 720));
+    let html = build_embed(&video_url, &thumb_url, &title, &pretty_date(&date), &fmt_bytes(size), vid_w, vid_h);
 
     c.put_object()
         .bucket(&s.r2_bucket)
@@ -235,6 +223,25 @@ pub async fn storage_usage(s: &AppSettings, prefix: &str) -> R2Result<u64> {
     }
 
     Ok(total)
+}
+
+fn get_video_resolution(path: &str) -> Option<(u32, u32)> {
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-select_streams", "v:0",
+               "-show_entries", "stream=width,height",
+               "-of", "csv=p=0:s=x", path])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let text = text.trim();
+    let parts: Vec<&str> = text.split('x').collect();
+    if parts.len() == 2 {
+        let w: u32 = parts[0].parse().ok()?;
+        let h: u32 = parts[1].parse().ok()?;
+        Some((w, h))
+    } else {
+        None
+    }
 }
 
 fn strip_video_ext(key: &str) -> &str {

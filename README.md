@@ -31,6 +31,21 @@ Unlike many existing clipping tools, Klyppd is designed to stay out of the way: 
 
 ---
 
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| App framework | [Electron](https://www.electronjs.org/) |
+| Frontend | [Svelte 5](https://svelte.dev/) + TypeScript |
+| Backend | TypeScript (Node.js) |
+| Database | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
+| Recording | [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder) |
+| Video editing | [FFmpeg](https://github.com/FFmpeg/FFmpeg) |
+| Cloud uploads | [Cloudflare R2](https://developers.cloudflare.com/r2/) via AWS S3 SDK |
+| Packaging | [electron-builder](https://www.electron.build/) (deb, rpm, AppImage) |
+
+---
+
 ## Features
 
 ### Fast GPU-Accelerated Recording
@@ -67,13 +82,20 @@ https://clip.example.com/p/abc123   # permanent
 
 > Additional cloud providers are planned for future releases.
 
+### Library Management
+
+- **Search & filter** clips by filename, tags, or folder
+- **Sort** by date, name, or duration (ascending/descending)
+- Grid and list view modes
+- Confirmation dialogs before destructive actions
+
 ### Customization
 
 Klyppd is designed to be tweakable. You can configure:
 
-- **Themes** via plain CSS (`~/.config/klyppd/theme.css`)
+- **Themes** via plain CSS (`~/.config/klyppd/theme.css`) or the in-app theme editor
 - **Buffer duration**, FPS, codec, container, audio source
-- **Hotkeys** through your window manager
+- **Hotkeys** through evdev (works on any compositor) or compositor keybinds
 - **Clip save location**
 
 More advanced customization options are planned over time.
@@ -90,27 +112,39 @@ Klyppd acts as a frontend for `gpu-screen-recorder` while layering on:
 - Trimming tools
 - Custom workflows
 
-Hotkey integrations communicate with the running app through a Unix socket (`/tmp/klyppd.sock`), so triggers always read live from the app's settings — no shell scripts to keep in sync.
+Hotkey integrations communicate with the running app through a Unix socket (`$XDG_RUNTIME_DIR/klyppd.sock`), so triggers always read live from the app's settings — no shell scripts to keep in sync.
 
 ---
 
 ## Requirements
 
+### System Dependencies
+
+| Dependency | Purpose |
+|-----------|---------|
+| `gpu-screen-recorder` | Recording backend |
+| `ffmpeg` / `ffprobe` | Video editing, thumbnails, codec detection |
+| Node.js ≥ 18 | Build from source |
+
+Klyppd checks for missing dependencies on startup and shows a warning banner if anything is missing.
+
 ### Arch Linux
 
 ```bash
-sudo pacman -S webkit2gtk-4.1 gpu-screen-recorder ffmpeg \
-               gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
+sudo pacman -S gpu-screen-recorder ffmpeg
 ```
 
 ### Ubuntu / Debian
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev gpu-screen-recorder ffmpeg \
-                 gstreamer1.0-plugins-{base,good,bad} gstreamer1.0-libav
+sudo apt install gpu-screen-recorder ffmpeg
 ```
 
-You also need a Rust toolchain (≥ 1.77) and Node.js (≥ 18) to build from source.
+### Fedora
+
+```bash
+sudo dnf install gpu-screen-recorder ffmpeg
+```
 
 ---
 
@@ -132,40 +166,41 @@ yay -S klyppd-git
 git clone https://github.com/brookerslyn/klyppd
 cd klyppd
 npm install
-npm run tauri build -- --bundles deb
+npm run electron:build
 ```
 
-This produces a `.deb` at `src-tauri/target/release/bundle/deb/klyppd_0.1.0_amd64.deb`.
+This produces packages in the `release/` directory:
+- `.deb` for Debian/Ubuntu
+- `.rpm` for Fedora/openSUSE
+- `.AppImage` for any Linux distro
 
 #### Install on Debian / Ubuntu
 
 ```bash
-sudo dpkg -i src-tauri/target/release/bundle/deb/klyppd_0.1.0_amd64.deb
+sudo dpkg -i release/klyppd_*.deb
 sudo apt -f install
+```
+
+#### Install on Fedora
+
+```bash
+sudo dnf install release/klyppd-*.rpm
 ```
 
 #### Run without installing
 
 ```bash
-./src-tauri/target/release/klyppd
+./release/klyppd-*.AppImage
 ```
 
 ### Development
 
 ```bash
-npm run tauri dev
+npm install
+npm run electron:dev
 ```
 
-### Faster builds (recommended)
-
-Install [mold](https://github.com/rui314/mold) for ~50% faster linking:
-
-```bash
-sudo pacman -S mold      # Arch
-sudo apt install mold    # Debian/Ubuntu
-```
-
-The repo's `src-tauri/.cargo/config.toml` is preconfigured to use it.
+This starts the Vite dev server and Electron concurrently with hot-reload.
 
 ---
 
@@ -221,7 +256,7 @@ Hotkeys work even when a fullscreen game has focus.
 
 #### Fallback: compositor keybinds (optional)
 
-If you prefer not to use the `input` group, you can bind through your compositor instead. These talk to the running app via a Unix socket (`/tmp/klyppd.sock`):
+If you prefer not to use the `input` group, you can bind through your compositor instead. These talk to the running app via a Unix socket (`$XDG_RUNTIME_DIR/klyppd.sock`):
 
 ```ini
 # hyprland.conf
@@ -259,6 +294,8 @@ Drop a `~/.config/klyppd/theme.css` file to override any of the CSS variables:
 }
 ```
 
+Or use the built-in **Theme Editor** in settings to tweak colors visually and export/import CSS.
+
 ---
 
 ## Project Status
@@ -273,12 +310,12 @@ The current UI was heavily built with the help of AI-assisted tools to accelerat
 
 - [ ] Additional cloud providers (S3, MinIO, custom HTTP)
 - [ ] Better UI customization
-- [ ] Improved clip management (tags, folders, filters)
-- [ ] In-app hotkey configuration
+- [x] Improved clip management (tags, folders, filters)
+- [x] In-app hotkey configuration
 - [ ] Cross-platform support
 - [ ] Automatic updates
 - [ ] Better onboarding / setup experience
-- [ ] AUR + AppImage releases
+- [x] AUR + AppImage releases
 
 ---
 

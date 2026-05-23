@@ -2,8 +2,14 @@
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 
-const SOCKET: &str = "/tmp/klyppd.sock";
+fn socket_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("klyppd.sock")
+}
 
 fn main() {
     // Workarounds for webkit2gtk on Wayland — discovered through painful trial and error.
@@ -30,7 +36,7 @@ fn main() {
 }
 
 fn send(cmd: &str) {
-    if let Ok(mut stream) = UnixStream::connect(SOCKET) {
+    if let Ok(mut stream) = UnixStream::connect(socket_path()) {
         let _ = stream.write_all(cmd.as_bytes());
     } else {
         let _ = std::process::Command::new("notify-send")

@@ -16,12 +16,21 @@ use db::{Clip, Database};
 use recorder::{Recorder, RecordingState};
 use settings::AppSettings;
 
-const SOCKET_PATH: &str = "/tmp/klyppd.sock";
-const PENDING_NAME_PATH: &str = "/tmp/klyppd-pending-name";
 const PREVIEW_DIR: &str = "klyppd-preview";
 
-// TODO: move socket to XDG_RUNTIME_DIR instead of /tmp (multi-user conflict)
-// TODO: configurable preview cache limit (currently grows unbounded)
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+fn socket_path() -> PathBuf {
+    runtime_dir().join("klyppd.sock")
+}
+
+fn pending_name_path() -> PathBuf {
+    runtime_dir().join("klyppd-pending-name")
+}
 
 pub struct AppState {
     pub db: Mutex<Database>,
@@ -200,12 +209,31 @@ fn get_settings(state: tauri::State<AppState>) -> AppSettings {
 #[tauri::command]
 fn set_window_opacity(opacity: f64) -> Result<(), String> {
     let val = opacity.clamp(0.1, 1.0);
-    let rule = format!("{val:.2} override {val:.2} override");
-    std::process::Command::new("hyprctl")
-        .args(["eval", &format!("hl.window_rule({{ match = {{ class = '^(klyppd)$' }}, opacity = '{rule}' }})")])
-        .output()
-        .map_err(err)?;
+
+    if which_cmd("hyprctl") {
+        let rule = format!("{val:.2} override {val:.2} override");
+        std::process::Command::new("hyprctl")
+            .args(["eval", &format!("hl.window_rule({{ match = {{ class = '^(klyppd)$' }}, opacity = '{rule}' }})")])
+            .output()
+            .ok();
+    } else if which_cmd("swaymsg") {
+        let pct = format!("{}", (val * 100.0) as u32);
+        std::process::Command::new("swaymsg")
+            .args(["[app_id=klyppd]", "opacity", &pct])
+            .output()
+            .ok();
+    }
     Ok(())
+}
+
+fn which_cmd(name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -247,54 +275,59 @@ fn read_video_bytes(path: String) -> Result<Vec<u8>, String> {
 /// Serve a video file on a random localhost port, return the URL.
 #[tauri::command]
 fn serve_video(path: String) -> Result<String, String> {
-    use std::io::{Read, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::net::TcpListener;
 
+    let file_len = std::fs::metadata(&path).map_err(err)?.len() as usize;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
     let port = listener.local_addr().map_err(err)?.port();
     let url = format!("http://127.0.0.1:{port}/video.mp4");
 
     std::thread::spawn(move || {
-        // Serve exactly one request then exit
-        let file_data = match std::fs::read(&path) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-        // Accept up to 5 requests (initial + range requests for seeking)
         for _ in 0..20 {
             let Ok((mut stream, _)) = listener.accept() else { break; };
             let mut req = vec![0u8; 4096];
             let n = stream.read(&mut req).unwrap_or(0);
             let req_str = String::from_utf8_lossy(&req[..n]);
 
-            // Parse Range header
             let (start, end) = if let Some(range_line) = req_str.lines().find(|l| l.starts_with("Range:")) {
-                // Range: bytes=START-END
                 let range = range_line.trim_start_matches("Range: bytes=");
                 let parts: Vec<&str> = range.split('-').collect();
                 let s: usize = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
-                let e: usize = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(file_data.len() - 1);
-                (s, e.min(file_data.len() - 1))
+                let e: usize = parts.get(1).and_then(|p| if p.is_empty() { None } else { p.parse().ok() }).unwrap_or(file_len - 1);
+                (s, e.min(file_len - 1))
             } else {
-                (0, file_data.len() - 1)
+                (0, file_len - 1)
             };
 
-            let chunk = &file_data[start..=end];
-            let total = file_data.len();
-
-            let header = if start == 0 && end == total - 1 {
+            let chunk_len = end - start + 1;
+            let header = if start == 0 && end == file_len - 1 {
                 format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: {total}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n"
+                    "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: {file_len}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n"
                 )
             } else {
                 format!(
-                    "HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n",
-                    chunk.len()
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Range: bytes {start}-{end}/{file_len}\r\nContent-Length: {chunk_len}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n"
                 )
             };
 
             stream.write_all(header.as_bytes()).ok();
-            stream.write_all(chunk).ok();
+
+            let Ok(mut file) = std::fs::File::open(&path) else { break; };
+            if file.seek(SeekFrom::Start(start as u64)).is_err() { continue; }
+            let mut remaining = chunk_len;
+            let mut buf = vec![0u8; 64 * 1024];
+            while remaining > 0 {
+                let to_read = remaining.min(buf.len());
+                match file.read(&mut buf[..to_read]) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if stream.write_all(&buf[..n]).is_err() { break; }
+                        remaining -= n;
+                    }
+                    Err(_) => break,
+                }
+            }
         }
     });
 
@@ -311,19 +344,21 @@ fn replace_file(src: String, dst: String) -> Result<(), String> {
 
 #[tauri::command]
 fn scan_clips(state: tauri::State<AppState>) -> Result<Vec<Clip>, String> {
-    let settings = state.settings.lock().unwrap();
-    let db = state.db.lock().unwrap();
+    let clips_dir = state.settings.lock().unwrap().clips_directory.clone();
 
-    let existing: std::collections::HashSet<String> = db.get_all_clips()
+    let existing: std::collections::HashSet<String> = state.db.lock().unwrap()
+        .get_all_clips()
         .unwrap_or_default()
         .into_iter()
         .map(|c| c.path)
         .collect();
 
-    let thumb_dir = Path::new(&settings.clips_directory).join(".thumbs");
+    let thumb_dir = Path::new(&clips_dir).join(".thumbs");
     std::fs::create_dir_all(&thumb_dir).ok();
 
-    if let Ok(entries) = std::fs::read_dir(&settings.clips_directory) {
+    let mut new_clips = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&clips_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -333,7 +368,7 @@ fn scan_clips(state: tauri::State<AppState>) -> Result<Vec<Clip>, String> {
             if existing.contains(&path_str) { continue; }
 
             let created = entry.metadata().ok()
-                .and_then(|m| m.created().ok())
+                .and_then(|m| m.created().or_else(|_| m.modified()).ok())
                 .map(|t| chrono::DateTime::<Utc>::from(t).to_rfc3339())
                 .unwrap_or_else(|| Utc::now().to_rfc3339());
 
@@ -342,7 +377,7 @@ fn scan_clips(state: tauri::State<AppState>) -> Result<Vec<Clip>, String> {
                 .ok()
                 .map(|_| thumb.to_string_lossy().to_string());
 
-            let clip = Clip {
+            new_clips.push(Clip {
                 id: uuid::Uuid::new_v4().to_string(),
                 filename: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                 path: path_str,
@@ -356,12 +391,18 @@ fn scan_clips(state: tauri::State<AppState>) -> Result<Vec<Clip>, String> {
                 r2_url: None,
                 expiry_date: None,
                 is_permanent: false,
-            };
-            db.insert_clip(&clip).ok();
+            });
         }
     }
 
-    db.get_all_clips().map_err(err)
+    if !new_clips.is_empty() {
+        let db = state.db.lock().unwrap();
+        for clip in &new_clips {
+            db.insert_clip(clip).ok();
+        }
+    }
+
+    state.db.lock().unwrap().get_all_clips().map_err(err)
 }
 
 // Helpers --------------------------------------------------------------------
@@ -371,20 +412,100 @@ fn config_dir() -> PathBuf {
 }
 
 fn capture_window_class() -> String {
+    if let Some(c) = try_hyprland_class() {
+        return pretty_app_name(&c);
+    }
+    if let Some(c) = try_sway_class() {
+        return pretty_app_name(&c);
+    }
+    if let Some(c) = try_gnome_class() {
+        return pretty_app_name(&c);
+    }
+    if let Some(c) = try_kde_class() {
+        return pretty_app_name(&c);
+    }
+    if let Some(c) = try_xdotool_class() {
+        return pretty_app_name(&c);
+    }
+    "Clip".into()
+}
+
+fn try_hyprland_class() -> Option<String> {
     let out = std::process::Command::new("hyprctl")
         .args(["activewindow", "-j"])
         .output()
-        .ok();
+        .ok()?;
+    extract_json_string(&String::from_utf8_lossy(&out.stdout), "class")
+        .filter(|s| !s.is_empty())
+}
 
-    let class = out
-        .as_ref()
-        .and_then(|o| extract_json_string(&String::from_utf8_lossy(&o.stdout), "class"))
-        .filter(|s| !s.is_empty());
+fn try_sway_class() -> Option<String> {
+    let out = std::process::Command::new("swaymsg")
+        .args(["-t", "get_tree"])
+        .output()
+        .ok()?;
+    let json = String::from_utf8_lossy(&out.stdout);
+    extract_focused_app_id(&json)
+}
 
-    match class {
-        Some(c) => pretty_app_name(&c),
-        None => "Clip".into(),
-    }
+fn try_gnome_class() -> Option<String> {
+    let out = std::process::Command::new("gdbus")
+        .args(["call", "--session", "--dest", "org.gnome.Shell",
+               "--object-path", "/org/gnome/Shell",
+               "--method", "org.gnome.Shell.Eval",
+               "global.display.focus_window ? global.display.focus_window.get_wm_class() : ''"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let start = text.find('\'')? + 1;
+    let end = text[start..].find('\'')?;
+    let class = text[start..start + end].trim().to_string();
+    if class.is_empty() { None } else { Some(class) }
+}
+
+fn try_kde_class() -> Option<String> {
+    let out = std::process::Command::new("qdbus")
+        .args(["org.kde.KWin", "/KWin", "org.kde.KWin.activeWindow"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() { return None; }
+    let out2 = std::process::Command::new("qdbus")
+        .args(["org.kde.KWin", &format!("/Windows/{text}"), "org.kde.KWin.Window.resourceClass"])
+        .output()
+        .ok()?;
+    let class = String::from_utf8_lossy(&out2.stdout).trim().to_string();
+    if class.is_empty() { None } else { Some(class) }
+}
+
+fn try_xdotool_class() -> Option<String> {
+    let out = std::process::Command::new("xdotool")
+        .args(["getactivewindow", "getwindowclassname"])
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    let class = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if class.is_empty() { None } else { Some(class) }
+}
+
+fn extract_focused_app_id(json: &str) -> Option<String> {
+    let idx = json.find("\"focused\":true")?;
+    let before = &json[..idx];
+    let app_id = before.rfind("\"app_id\":\"")
+        .map(|i| {
+            let start = i + "\"app_id\":\"".len();
+            let end = json[start..].find('"').unwrap_or(0);
+            json[start..start + end].to_string()
+        })
+        .filter(|s| !s.is_empty() && s != "null");
+    if app_id.is_some() { return app_id; }
+    before.rfind("\"class\":\"")
+        .map(|i| {
+            let start = i + "\"class\":\"".len();
+            let end = json[start..].find('"').unwrap_or(0);
+            json[start..start + end].to_string()
+        })
+        .filter(|s| !s.is_empty() && s != "null")
 }
 
 fn extract_json_string(s: &str, key: &str) -> Option<String> {
@@ -424,16 +545,34 @@ fn sanitize(s: &str) -> String {
 }
 
 fn lookup_desktop_name(class: &str) -> Option<String> {
-    let mut dirs = vec![
+    let mut app_dirs = vec![
         PathBuf::from("/usr/share/applications"),
         PathBuf::from("/usr/local/share/applications"),
     ];
     if let Some(d) = dirs::data_dir() {
-        dirs.push(d.join("applications"));
+        app_dirs.push(d.join("applications"));
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_DIRS") {
+        for dir in xdg.split(':') {
+            let p = PathBuf::from(dir).join("applications");
+            if !app_dirs.contains(&p) {
+                app_dirs.push(p);
+            }
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        let flatpak = home.join(".local/share/flatpak/exports/share/applications");
+        if !app_dirs.contains(&flatpak) {
+            app_dirs.push(flatpak);
+        }
+    }
+    let snap = PathBuf::from("/var/lib/snapd/desktop/applications");
+    if !app_dirs.contains(&snap) {
+        app_dirs.push(snap);
     }
 
     let target = class.to_lowercase();
-    for dir in dirs {
+    for dir in app_dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue; };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -479,7 +618,7 @@ fn handle_hotkey(handle: &tauri::AppHandle, cmd: &str) {
         "save-replay" => {
             let win = capture_window_class();
             let date = Local::now().format("%Y-%m-%d").to_string();
-            std::fs::write(PENDING_NAME_PATH, format!("{win}_{date}")).ok();
+            std::fs::write(pending_name_path(), format!("{win}_{date}")).ok();
 
             match state.recorder.lock().unwrap().save_replay() {
                 Ok(_) => {
@@ -637,14 +776,6 @@ fn spawn_evdev_hotkeys(handle: tauri::AppHandle) {
     });
 }
 
-fn key_matches(hotkey_str: &str, pressed: evdev::Key) -> bool {
-    // Parse "Alt+R" or "Ctrl+Shift+F9" or just "F9"
-    let parts: Vec<&str> = hotkey_str.split('+').map(|s| s.trim()).collect();
-    let main_key = parts.last().unwrap_or(&"");
-    let key_name = format!("KEY_{}", main_key.to_uppercase());
-    format!("{:?}", pressed) == key_name
-}
-
 /// Track modifier state globally for combo hotkeys
 static MODS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 const MOD_ALT: u8 = 1;
@@ -695,8 +826,9 @@ fn spawn_socket_listener(handle: tauri::AppHandle) {
     use std::os::unix::net::UnixListener;
 
     std::thread::spawn(move || {
-        let _ = std::fs::remove_file(SOCKET_PATH);
-        let Ok(listener) = UnixListener::bind(SOCKET_PATH) else { return; };
+        let sock = socket_path();
+        let _ = std::fs::remove_file(&sock);
+        let Ok(listener) = UnixListener::bind(&sock) else { return; };
 
         for stream in listener.incoming().flatten() {
             let mut s = stream;
@@ -747,7 +879,8 @@ fn spawn_clips_watcher(handle: tauri::AppHandle, dir: String) {
 }
 
 fn rename_if_pending(path: &Path, ext: &str) -> Option<PathBuf> {
-    let pending = std::fs::read_to_string(PENDING_NAME_PATH).ok()?;
+    let pnp = pending_name_path();
+    let pending = std::fs::read_to_string(&pnp).ok()?;
     let pending = pending.trim();
     if pending.is_empty() { return None; }
 
@@ -760,7 +893,7 @@ fn rename_if_pending(path: &Path, ext: &str) -> Option<PathBuf> {
     }
 
     let result = std::fs::rename(path, &target).ok().map(|_| target);
-    std::fs::remove_file(PENDING_NAME_PATH).ok();
+    std::fs::remove_file(&pnp).ok();
     result
 }
 

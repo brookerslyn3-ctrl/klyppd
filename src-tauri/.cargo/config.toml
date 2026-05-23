@@ -1,3 +1,7 @@
+# Use mold linker for faster builds if available.
+# Install: `sudo apt install mold` or `sudo pacman -S mold`
+# If mold is not installed, comment out or remove the rustflags line below
+# and cargo will use the default linker.
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]

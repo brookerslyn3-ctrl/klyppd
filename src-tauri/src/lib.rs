@@ -258,6 +258,19 @@ fn get_theme_css() -> Result<String, String> {
     Ok(std::fs::read_to_string(path).unwrap_or_default())
 }
 
+// Dependency check -----------------------------------------------------------
+
+#[tauri::command]
+fn check_dependencies() -> Vec<String> {
+    let mut missing = Vec::new();
+    for dep in ["gpu-screen-recorder", "ffmpeg", "ffprobe"] {
+        if !which_cmd(dep) {
+            missing.push(dep.to_string());
+        }
+    }
+    missing
+}
+
 // Files -----------------------------------------------------------------------
 
 #[tauri::command]
@@ -345,6 +358,17 @@ fn replace_file(src: String, dst: String) -> Result<(), String> {
 #[tauri::command]
 fn scan_clips(state: tauri::State<AppState>) -> Result<Vec<Clip>, String> {
     let clips_dir = state.settings.lock().unwrap().clips_directory.clone();
+
+    // Remove stale DB entries for clips whose files no longer exist on disk
+    {
+        let db = state.db.lock().unwrap();
+        let all = db.get_all_clips().unwrap_or_default();
+        for clip in &all {
+            if !Path::new(&clip.path).exists() {
+                db.delete_clip(&clip.id).ok();
+            }
+        }
+    }
 
     let existing: std::collections::HashSet<String> = state.db.lock().unwrap()
         .get_all_clips()
@@ -933,9 +957,27 @@ fn rename_if_pending(path: &Path, ext: &str) -> Option<PathBuf> {
 
 // Entry point ----------------------------------------------------------------
 
+fn cleanup_preview_cache() {
+    let dir = std::env::temp_dir().join(PREVIEW_DIR);
+    if !dir.exists() { return; }
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 24 * 3600);
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let stale = entry.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| t < cutoff)
+                .unwrap_or(true);
+            if stale {
+                std::fs::remove_file(entry.path()).ok();
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     std::fs::create_dir_all(config_dir()).ok();
+    cleanup_preview_cache();
 
     let data_dir = dirs::data_dir().unwrap_or_default().join("klyppd");
     std::fs::create_dir_all(&data_dir).ok();
@@ -977,6 +1019,7 @@ pub fn run() {
             trim_clip, crop_clip, transcode_for_preview,
             upload_clip, delete_from_r2, r2_storage,
             get_settings, save_settings, set_window_opacity, get_storage_usage, get_theme_css,
+            check_dependencies,
             scan_clips, read_thumbnail, read_video_bytes, serve_video, replace_file,
         ])
         .run(tauri::generate_context!())

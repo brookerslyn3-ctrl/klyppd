@@ -34,7 +34,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": ["deb", "rpm", "appimage"],
     "shortDescription": "Medal-style clip manager for Linux",
     "longDescription": "Klyppd is a lightweight clipping and recording tool for Linux. It uses gpu-screen-recorder for low-overhead capture, ships a built-in trimmer, and uploads to your own Cloudflare R2 with rich Discord/Twitter embed pages.",
     "category": "Utility",

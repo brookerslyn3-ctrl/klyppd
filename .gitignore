@@ -22,9 +22,10 @@ pnpm-debug.log*
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Rust / Tauri
-src-tauri/target/
-src-tauri/gen/schemas/
+# Electron
+/dist-electron/
+/dist/
+/release/
 
 # Env
 .env

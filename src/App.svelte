@@ -1,10 +1,26 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
-    import { listen } from "@tauri-apps/api/event";
-    import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-    import { getCurrentWindow } from "@tauri-apps/api/window";
     import { theme, defaultTheme, type ThemeVars } from "./lib/stores/theme";
+
+    function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+        // Map named args from Tauri-style { key: val } to positional IPC args
+        if (args) {
+            const keys = Object.keys(args);
+            if (keys.length === 1) {
+                return window.klyppd.invoke(cmd, args[keys[0]]) as Promise<T>;
+            }
+            return window.klyppd.invoke(cmd, ...Object.values(args)) as Promise<T>;
+        }
+        return window.klyppd.invoke(cmd) as Promise<T>;
+    }
+
+    function listen(event: string, handler: (e: { payload: any }) => void): void {
+        window.klyppd.on(event, (payload: any) => handler({ payload }));
+    }
+
+    async function writeText(text: string): Promise<void> {
+        await window.klyppd.clipboard.writeText(text);
+    }
 
     type Tab = "library" | "uploads" | "permanent" | "settings" | "editor";
     type ToastKind = "ok" | "err";
@@ -40,6 +56,13 @@
     let thumbCache = $state<Record<string, string>>({});
     let viewMode = $state<ViewMode>("grid");
     let sidebarCollapsed = $state(false);
+    let searchQuery = $state("");
+    let sortBy = $state<"date" | "name" | "duration">("date");
+    let sortAsc = $state(false);
+    let recordingStartTime = $state<number | null>(null);
+    let recordingElapsed = $state("");
+    let depsOk = $state(true);
+    let depsMissing = $state<string[]>([]);
 
     let toast = $state<{ msg: string; kind: ToastKind } | null>(null);
     let toastTimer: any;
@@ -80,8 +103,18 @@
         await injectUserTheme();
         theme.apply();
         settings = await invoke("get_settings");
+
+        try {
+            const missing = await invoke<string[]>("check_dependencies");
+            if (missing.length > 0) {
+                depsOk = false;
+                depsMissing = missing;
+            }
+        } catch {}
+
         await refresh();
         setInterval(refresh, 3000);
+        setInterval(updateRecordingTimer, 500);
         await loadClips();
 
         listen("clip-saved", (e: any) => {
@@ -90,7 +123,6 @@
         });
         listen("toast", (e: any) => notify(e.payload.msg, e.payload.kind));
 
-        // Subscribe to theme store for local reactivity
         theme.subscribe((v) => {
             currentTheme = v;
         });
@@ -127,9 +159,25 @@
     // ─── Data fetching ─────────────────────────────────────────────────────
 
     async function refresh() {
+        const prev = recState.recording_active;
         recState = await invoke("get_recording_state");
+        if (recState.recording_active && !prev) {
+            recordingStartTime = Date.now();
+        } else if (!recState.recording_active && prev) {
+            recordingStartTime = null;
+            recordingElapsed = "";
+        }
         if (tab !== "settings") settings = await invoke("get_settings");
         storageUsage = await invoke("get_storage_usage");
+    }
+
+    function updateRecordingTimer() {
+        if (recordingStartTime) {
+            const s = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const m = Math.floor(s / 60);
+            const sec = (s % 60).toString().padStart(2, "0");
+            recordingElapsed = `${m}:${sec}`;
+        }
     }
 
     async function loadClips() {
@@ -217,6 +265,7 @@
     }
 
     async function deleteClip(clip: Clip) {
+        if (!confirm(`Delete "${clip.filename}"? This cannot be undone.`)) return;
         try {
             await invoke("delete_clip", { id: clip.id });
             notify("Deleted");
@@ -240,9 +289,14 @@
     }
 
     async function deleteFromR2(clip: Clip) {
-        await invoke("delete_from_r2", { id: clip.id });
-        notify("Removed from R2");
-        await switchTab(tab);
+        if (!confirm(`Remove "${clip.filename}" from R2? The remote file will be deleted.`)) return;
+        try {
+            await invoke("delete_from_r2", { id: clip.id });
+            notify("Removed from R2");
+            await switchTab(tab);
+        } catch (e: any) {
+            notify("R2 delete failed", "err");
+        }
     }
 
     // ─── Editor ────────────────────────────────────────────────────────────
@@ -367,6 +421,27 @@
             ? `${(b / 1e6).toFixed(0)} MB`
             : `${(b / 1e9).toFixed(1)} GB`;
     }
+
+    function filteredClips(list: Clip[]) {
+        let result = list;
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            result = result.filter(
+                (c) =>
+                    c.filename.toLowerCase().includes(q) ||
+                    (c.tags && c.tags.toLowerCase().includes(q)) ||
+                    (c.folder && c.folder.toLowerCase().includes(q)),
+            );
+        }
+        result = [...result].sort((a, b) => {
+            let cmp = 0;
+            if (sortBy === "name") cmp = a.filename.localeCompare(b.filename);
+            else if (sortBy === "duration") cmp = a.duration - b.duration;
+            else cmp = a.created_at.localeCompare(b.created_at);
+            return sortAsc ? cmp : -cmp;
+        });
+        return result;
+    }
 </script>
 
 {#if toast}
@@ -396,16 +471,19 @@
             <span class="info-tag">{settings.codec || "h264"}</span>
             <span class="info-tag">{settings.fps || 60}fps</span>
             <span class="info-tag">{fmtBytes(storageUsage)}</span>
+            {#if recState.recording_active && recordingElapsed}
+                <span class="info-tag rec-timer">{recordingElapsed}</span>
+            {/if}
         </div>
         <div class="window-ctrls">
             <button
-                onclick={() => getCurrentWindow().hide()}
+                onclick={() => window.klyppd.window.hide()}
                 aria-label="hide"
                 class="wc-min"
                 title="Hide">─</button
             >
             <button
-                onclick={() => getCurrentWindow().close()}
+                onclick={() => window.klyppd.window.close()}
                 aria-label="close"
                 class="wc-close">✕</button
             >
@@ -504,14 +582,35 @@
         </nav>
 
         <main>
+            {#if !depsOk}
+                <div class="deps-warn">
+                    <span class="deps-icon">⚠</span>
+                    <span>Missing: {depsMissing.join(", ")}. Recording and editing features will not work.</span>
+                </div>
+            {/if}
+
             {#if tab === "library"}
                 <div class="page-head">
                     <div class="page-title">
                         <span class="prompt">~</span>
                         <h1>library</h1>
-                        <span class="count">{clips.length}</span>
+                        <span class="count">{filteredClips(clips).length}</span>
                     </div>
                     <div class="page-controls">
+                        <input
+                            class="search-input"
+                            type="text"
+                            placeholder="search…"
+                            bind:value={searchQuery}
+                        />
+                        <select class="sort-select" bind:value={sortBy} onchange={() => forceRepaint()}>
+                            <option value="date">date</option>
+                            <option value="name">name</option>
+                            <option value="duration">duration</option>
+                        </select>
+                        <button class="sort-dir" onclick={() => { sortAsc = !sortAsc; forceRepaint(); }} title={sortAsc ? "Ascending" : "Descending"}>
+                            {sortAsc ? "↑" : "↓"}
+                        </button>
                         <button
                             class="view-toggle"
                             class:active={viewMode === "grid"}
@@ -546,7 +645,7 @@
                     </div>
                 {:else if viewMode === "grid"}
                     <div class="grid">
-                        {#each clips as clip}
+                        {#each filteredClips(clips) as clip}
                             <article class="clip-card">
                                 <div
                                     class="clip-thumb"
@@ -623,7 +722,7 @@
                     </div>
                 {:else}
                     <div class="list">
-                        {#each clips as clip}
+                        {#each filteredClips(clips) as clip}
                             <div
                                 class="list-row"
                                 role="button"
@@ -2389,5 +2488,65 @@
         display: flex;
         gap: 4px;
         padding: 8px 0 4px;
+    }
+
+    .search-input {
+        background: var(--bg-elev-1);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text);
+        font-size: 11px;
+        padding: 4px 8px;
+        width: 140px;
+        outline: none;
+    }
+    .search-input:focus { border-color: var(--accent); }
+    .sort-select {
+        background: var(--bg-elev-1);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-dim);
+        font-size: 11px;
+        padding: 4px 6px;
+        outline: none;
+        cursor: pointer;
+    }
+    .sort-dir {
+        background: var(--bg-elev-1);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-dim);
+        font-size: 13px;
+        width: 26px;
+        height: 26px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .sort-dir:hover { border-color: var(--accent); color: var(--text); }
+
+    .deps-warn {
+        background: rgba(224, 108, 117, 0.12);
+        border: 1px solid var(--danger);
+        border-radius: 6px;
+        padding: 8px 14px;
+        margin: 8px 0;
+        font-size: 12px;
+        color: var(--danger);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .deps-icon { font-size: 16px; }
+
+    .rec-timer {
+        color: #e06c75;
+        font-weight: 600;
+        animation: pulse-rec 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse-rec {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
     }
 </style>

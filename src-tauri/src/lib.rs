@@ -720,58 +720,92 @@ fn spawn_evdev_hotkeys(handle: tauri::AppHandle) {
         use evdev::{Device, InputEventKind, Key};
         use std::time::Instant;
 
-        // Find keyboard devices
-        let mut devices: Vec<Device> = evdev::enumerate()
-            .filter_map(|(_, d)| {
-                if d.supported_keys().is_some_and(|k| k.contains(Key::KEY_A)) {
-                    Some(d)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let grab_keyboards = || -> Vec<Device> {
+            use std::os::unix::io::AsRawFd;
+            evdev::enumerate()
+                .filter_map(|(_, d)| {
+                    if d.supported_keys().is_some_and(|k| k.contains(Key::KEY_A)) {
+                        let fd = d.as_raw_fd();
+                        unsafe {
+                            let flags = libc::fcntl(fd, libc::F_GETFL);
+                            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                        }
+                        Some(d)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        let mut devices = grab_keyboards();
 
         if devices.is_empty() {
             eprintln!("klyppd: no keyboard found in /dev/input/ (are you in the 'input' group?)");
             return;
         }
 
-        // Poll all keyboards
         let mut last_clip = Instant::now() - std::time::Duration::from_secs(5);
+        let mut last_rescan = Instant::now();
+
         loop {
-            for dev in &mut devices {
-                if let Ok(events) = dev.fetch_events() {
-                    for ev in events {
-                        if let InputEventKind::Key(key) = ev.kind() {
-                            // Track modifier state
-                            update_modifiers(key, ev.value() != 0);
+            // Re-enumerate devices periodically to handle hotplug
+            if last_rescan.elapsed() > std::time::Duration::from_secs(30) {
+                last_rescan = Instant::now();
+                let fresh = grab_keyboards();
+                if !fresh.is_empty() {
+                    devices = fresh;
+                }
+            }
 
-                            if ev.value() != 1 { continue; } // key down only
+            let mut had_events = false;
+            let mut dead_indices = Vec::new();
 
-                            let state = handle.state::<AppState>();
-                            let settings = state.settings.lock().unwrap().clone();
+            for (i, dev) in devices.iter_mut().enumerate() {
+                match dev.fetch_events() {
+                    Ok(events) => {
+                        for ev in events {
+                            had_events = true;
+                            if let InputEventKind::Key(key) = ev.kind() {
+                                update_modifiers(key, ev.value() != 0);
 
-                            let matched = if hotkey_matches(&settings.hotkey_save_replay, key) {
-                                if last_clip.elapsed() > std::time::Duration::from_millis(1500) {
-                                    last_clip = Instant::now();
-                                    Some("save-replay")
-                                } else { None }
-                            } else if hotkey_matches(&settings.hotkey_start_stop_recording, key) {
-                                Some("toggle-recording")
-                            } else if hotkey_matches(&settings.hotkey_start_stop_buffer, key) {
-                                Some("toggle-buffer")
-                            } else {
-                                None
-                            };
+                                if ev.value() != 1 { continue; } // key down only
 
-                            if let Some(cmd) = matched {
-                                handle_hotkey(&handle, cmd);
+                                let state = handle.state::<AppState>();
+                                let settings = state.settings.lock().unwrap().clone();
+
+                                let matched = if hotkey_matches(&settings.hotkey_save_replay, key) {
+                                    if last_clip.elapsed() > std::time::Duration::from_millis(1500) {
+                                        last_clip = Instant::now();
+                                        Some("save-replay")
+                                    } else { None }
+                                } else if hotkey_matches(&settings.hotkey_start_stop_recording, key) {
+                                    Some("toggle-recording")
+                                } else if hotkey_matches(&settings.hotkey_start_stop_buffer, key) {
+                                    Some("toggle-buffer")
+                                } else {
+                                    None
+                                };
+
+                                if let Some(cmd) = matched {
+                                    handle_hotkey(&handle, cmd);
+                                }
                             }
                         }
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(_) => { dead_indices.push(i); }
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+
+            // Remove disconnected devices (iterate in reverse to preserve indices)
+            for i in dead_indices.into_iter().rev() {
+                devices.swap_remove(i);
+            }
+
+            if !had_events {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         }
     });
 }

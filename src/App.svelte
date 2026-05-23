@@ -1469,7 +1469,7 @@
         align-items: center;
         gap: 6px;
         flex: 1;
-        -webkit-app-region: no-drag;
+        -webkit-app-region: drag;
     }
 
     .rec-btn {
@@ -1486,6 +1486,7 @@
         transition: all 0.15s;
         font-family: inherit;
         letter-spacing: 0.3px;
+        -webkit-app-region: no-drag;
     }
     .rec-btn:hover {
         border-color: var(--border-strong, #232a35);

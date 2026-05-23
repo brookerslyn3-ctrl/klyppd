@@ -1,0 +1,13 @@
+scrollbar slider {
+  background-color: #36393e;
+  border: none;
+  border-radius: 99px;
+  min-width: 4px;
+  min-height: 20px;
+}
+scrollbar slider:hover {
+  background-color: #42474e;
+}
+scrollbar {
+  background: transparent;
+}

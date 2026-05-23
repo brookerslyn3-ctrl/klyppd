@@ -195,6 +195,17 @@ fn get_settings(state: tauri::State<AppState>) -> AppSettings {
 }
 
 #[tauri::command]
+fn set_window_opacity(opacity: f64) -> Result<(), String> {
+    let val = opacity.clamp(0.1, 1.0);
+    let rule = format!("{val:.2} override {val:.2} override");
+    std::process::Command::new("hyprctl")
+        .args(["eval", &format!("hl.window_rule({{ match = {{ class = '^(klyppd)$' }}, opacity = '{rule}' }})")])
+        .output()
+        .map_err(err)?;
+    Ok(())
+}
+
+#[tauri::command]
 fn save_settings(state: tauri::State<AppState>, new_settings: AppSettings) -> Result<(), String> {
     *state.settings.lock().unwrap() = new_settings.clone();
     settings::save(&new_settings).map_err(err)
@@ -228,6 +239,63 @@ fn read_thumbnail(path: String) -> Result<String, String> {
 #[tauri::command]
 fn read_video_bytes(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(&path).map_err(err)
+}
+
+/// Serve a video file on a random localhost port, return the URL.
+#[tauri::command]
+fn serve_video(path: String) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
+    let port = listener.local_addr().map_err(err)?.port();
+    let url = format!("http://127.0.0.1:{port}/video.mp4");
+
+    std::thread::spawn(move || {
+        // Serve exactly one request then exit
+        let file_data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        // Accept up to 5 requests (initial + range requests for seeking)
+        for _ in 0..20 {
+            let Ok((mut stream, _)) = listener.accept() else { break; };
+            let mut req = vec![0u8; 4096];
+            let n = stream.read(&mut req).unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&req[..n]);
+
+            // Parse Range header
+            let (start, end) = if let Some(range_line) = req_str.lines().find(|l| l.starts_with("Range:")) {
+                // Range: bytes=START-END
+                let range = range_line.trim_start_matches("Range: bytes=");
+                let parts: Vec<&str> = range.split('-').collect();
+                let s: usize = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+                let e: usize = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(file_data.len() - 1);
+                (s, e.min(file_data.len() - 1))
+            } else {
+                (0, file_data.len() - 1)
+            };
+
+            let chunk = &file_data[start..=end];
+            let total = file_data.len();
+
+            let header = if start == 0 && end == total - 1 {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: {total}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n"
+                )
+            } else {
+                format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n",
+                    chunk.len()
+                )
+            };
+
+            stream.write_all(header.as_bytes()).ok();
+            stream.write_all(chunk).ok();
+        }
+    });
+
+    Ok(url)
 }
 
 #[tauri::command]
@@ -503,6 +571,122 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Reads /dev/input/ via evdev for global hotkeys — works on any compositor.
+/// User needs to be in the `input` group: `sudo usermod -aG input $USER`
+fn spawn_evdev_hotkeys(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        use evdev::{Device, InputEventKind, Key};
+        use std::time::Instant;
+
+        // Find keyboard devices
+        let mut devices: Vec<Device> = evdev::enumerate()
+            .filter_map(|(_, d)| {
+                if d.supported_keys().is_some_and(|k| k.contains(Key::KEY_A)) {
+                    Some(d)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if devices.is_empty() {
+            eprintln!("klyppd: no keyboard found in /dev/input/ (are you in the 'input' group?)");
+            return;
+        }
+
+        // Poll all keyboards
+        let mut last_clip = Instant::now() - std::time::Duration::from_secs(5);
+        loop {
+            for dev in &mut devices {
+                if let Ok(events) = dev.fetch_events() {
+                    for ev in events {
+                        if let InputEventKind::Key(key) = ev.kind() {
+                            // Track modifier state
+                            update_modifiers(key, ev.value() != 0);
+
+                            if ev.value() != 1 { continue; } // key down only
+
+                            let state = handle.state::<AppState>();
+                            let settings = state.settings.lock().unwrap().clone();
+
+                            let matched = if hotkey_matches(&settings.hotkey_save_replay, key) {
+                                if last_clip.elapsed() > std::time::Duration::from_millis(1500) {
+                                    last_clip = Instant::now();
+                                    Some("save-replay")
+                                } else { None }
+                            } else if hotkey_matches(&settings.hotkey_start_stop_recording, key) {
+                                Some("toggle-recording")
+                            } else if hotkey_matches(&settings.hotkey_start_stop_buffer, key) {
+                                Some("toggle-buffer")
+                            } else {
+                                None
+                            };
+
+                            if let Some(cmd) = matched {
+                                handle_hotkey(&handle, cmd);
+                            }
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+}
+
+fn key_matches(hotkey_str: &str, pressed: evdev::Key) -> bool {
+    // Parse "Alt+R" or "Ctrl+Shift+F9" or just "F9"
+    let parts: Vec<&str> = hotkey_str.split('+').map(|s| s.trim()).collect();
+    let main_key = parts.last().unwrap_or(&"");
+    let key_name = format!("KEY_{}", main_key.to_uppercase());
+    format!("{:?}", pressed) == key_name
+}
+
+/// Track modifier state globally for combo hotkeys
+static MODS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+const MOD_ALT: u8 = 1;
+const MOD_CTRL: u8 = 2;
+const MOD_SHIFT: u8 = 4;
+const MOD_SUPER: u8 = 8;
+
+fn update_modifiers(key: evdev::Key, down: bool) {
+    use std::sync::atomic::Ordering;
+    let bit = match key {
+        evdev::Key::KEY_LEFTALT | evdev::Key::KEY_RIGHTALT => MOD_ALT,
+        evdev::Key::KEY_LEFTCTRL | evdev::Key::KEY_RIGHTCTRL => MOD_CTRL,
+        evdev::Key::KEY_LEFTSHIFT | evdev::Key::KEY_RIGHTSHIFT => MOD_SHIFT,
+        evdev::Key::KEY_LEFTMETA | evdev::Key::KEY_RIGHTMETA => MOD_SUPER,
+        _ => return,
+    };
+    if down {
+        MODS.fetch_or(bit, Ordering::Relaxed);
+    } else {
+        MODS.fetch_and(!bit, Ordering::Relaxed);
+    }
+}
+
+fn hotkey_matches(hotkey_str: &str, pressed: evdev::Key) -> bool {
+    use std::sync::atomic::Ordering;
+
+    let parts: Vec<&str> = hotkey_str.split('+').map(|s| s.trim()).collect();
+    if parts.is_empty() { return false; }
+
+    let main_key = parts.last().unwrap().to_uppercase();
+    let key_name = format!("KEY_{}", main_key);
+    if format!("{:?}", pressed) != key_name { return false; }
+
+    let mods = MODS.load(Ordering::Relaxed);
+    let need_alt = parts.iter().any(|p| p.eq_ignore_ascii_case("alt"));
+    let need_ctrl = parts.iter().any(|p| p.eq_ignore_ascii_case("ctrl"));
+    let need_shift = parts.iter().any(|p| p.eq_ignore_ascii_case("shift"));
+    let need_super = parts.iter().any(|p| p.eq_ignore_ascii_case("super") || p.eq_ignore_ascii_case("meta"));
+
+    (need_alt == (mods & MOD_ALT != 0))
+        && (need_ctrl == (mods & MOD_CTRL != 0))
+        && (need_shift == (mods & MOD_SHIFT != 0))
+        && (need_super == (mods & MOD_SUPER != 0))
+}
+
 fn spawn_socket_listener(handle: tauri::AppHandle) {
     use std::io::Read;
     use std::os::unix::net::UnixListener;
@@ -612,6 +796,7 @@ pub fn run() {
             spawn_socket_listener(app.handle().clone());
             spawn_clips_watcher(app.handle().clone(), watch_dir);
             spawn_tray(app.handle().clone())?;
+            spawn_evdev_hotkeys(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -621,8 +806,8 @@ pub fn run() {
             start_recording, stop_recording, get_recording_state,
             trim_clip, crop_clip, transcode_for_preview,
             upload_clip, delete_from_r2, r2_storage,
-            get_settings, save_settings, get_storage_usage, get_theme_css,
-            scan_clips, read_thumbnail, read_video_bytes, replace_file,
+            get_settings, save_settings, set_window_opacity, get_storage_usage, get_theme_css,
+            scan_clips, read_thumbnail, read_video_bytes, serve_video, replace_file,
         ])
         .run(tauri::generate_context!())
         .expect("run tauri app");

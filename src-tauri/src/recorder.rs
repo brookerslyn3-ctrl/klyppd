@@ -93,7 +93,7 @@ fn base_command(s: &AppSettings) -> Command {
     cmd.args(["-w", "portal"])
        .args(["-f", &s.fps.to_string()])
        .args(["-k", &s.codec])
-       .args(["-ac", "aac"]);
+       .args(["-ac", &s.audio_codec]);
 
     if !s.audio_source.is_empty() {
         cmd.args(["-a", &s.audio_source]);

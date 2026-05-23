@@ -150,13 +150,21 @@ pub async fn upload(s: &AppSettings, clip: &Clip, permanent: bool) -> R2Result<S
     let size = std::fs::metadata(&clip.path).map(|m| m.len()).unwrap_or(0);
     let (title, date) = split_filename(&clip.filename);
 
+    // Ensure the video has AAC audio (browsers/Discord can't play opus-in-mp4)
+    let upload_path = ensure_aac(&clip.path);
+
     c.put_object()
         .bucket(&s.r2_bucket)
         .key(&video_key)
-        .body(ByteStream::from_path(&clip.path).await?)
+        .body(ByteStream::from_path(&upload_path).await?)
         .content_type(format!("video/{ext}"))
         .send()
         .await?;
+
+    // Clean up temp file if we remuxed
+    if upload_path != clip.path {
+        std::fs::remove_file(&upload_path).ok();
+    }
 
     let thumb_url = match clip.thumbnail_path.as_ref().filter(|p| Path::new(p).exists()) {
         Some(tp) => match ByteStream::from_path(tp).await {
@@ -234,4 +242,27 @@ fn strip_video_ext(key: &str) -> &str {
         if let Some(s) = key.strip_suffix(ext) { return s; }
     }
     key
+}
+
+/// If the file has non-AAC audio, remux to a temp file with AAC. Returns path to use for upload.
+fn ensure_aac(path: &str) -> String {
+    // Check audio codec
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", path])
+        .output();
+    let codec = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+
+    if codec == "aac" {
+        return path.to_string();
+    }
+
+    // Remux with AAC audio
+    let tmp = format!("{}.upload.mp4", path);
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-y", "-i", path, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", &tmp])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if ok { tmp } else { path.to_string() }
 }

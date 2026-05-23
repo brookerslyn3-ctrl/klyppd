@@ -4,7 +4,7 @@ type Error = Box<dyn std::error::Error>;
 
 pub fn trim(input: &str, output: &str, start: f64, end: f64) -> Result<String, Error> {
     let ok = Command::new("ffmpeg")
-        .args(["-y", "-ss", &format!("{start:.3}"), "-to", &format!("{end:.3}"), "-i", input, "-c", "copy", output])
+        .args(["-y", "-ss", &format!("{start:.3}"), "-to", &format!("{end:.3}"), "-i", input, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", output])
         .status()?
         .success();
     if ok { Ok(output.into()) } else { Err("ffmpeg trim failed".into()) }

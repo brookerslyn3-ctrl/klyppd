@@ -12,6 +12,11 @@ fn main() {
         // SAFETY: single-threaded at this point (before Tauri spawns anything).
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1"); }
     }
+    // Kill GTK scrollbar entirely — we use mousewheel/trackpad only
+    unsafe {
+        std::env::set_var("GTK_OVERLAY_SCROLLING", "0");
+        std::env::set_var("GTK_THEME", "Adwaita:dark");
+    }
 
     let args: Vec<String> = std::env::args().collect();
     if let [_, flag, cmd, ..] = args.as_slice() {

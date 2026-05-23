@@ -95,6 +95,12 @@ fn base_command(s: &AppSettings) -> Command {
        .args(["-k", &s.codec])
        .args(["-ac", &s.audio_codec]);
 
+    // FIXME: portal capture doesn't work on some wlroots compositors (labwc, river)
+    // might need to fall back to monitor name detection via `gpu-screen-recorder --list-monitors`
+
+    // TODO: support multiple audio sources (game + mic) via pipe-separated -a args
+    // e.g. "-a" "default_output|default_input"
+
     if !s.audio_source.is_empty() {
         cmd.args(["-a", &s.audio_source]);
     }

@@ -20,6 +20,9 @@ const SOCKET_PATH: &str = "/tmp/klyppd.sock";
 const PENDING_NAME_PATH: &str = "/tmp/klyppd-pending-name";
 const PREVIEW_DIR: &str = "klyppd-preview";
 
+// TODO: move socket to XDG_RUNTIME_DIR instead of /tmp (multi-user conflict)
+// TODO: configurable preview cache limit (currently grows unbounded)
+
 pub struct AppState {
     pub db: Mutex<Database>,
     pub recorder: Mutex<Recorder>,

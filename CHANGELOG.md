@@ -15,7 +15,7 @@
 ## Improvements
 
 - **Instant trimmer** — skips FFmpeg transcode for clips already in h264+aac mp4 (opens in <1s)
-- **Vice-style trim** — video seeks to frame during handle drag so you see exactly where you're cutting
+- **Better trim** — video seeks to frame during handle drag so you see exactly where you're cutting
 - **Rich Discord embeds** — "Clipped with Klyppd · 11.4 MB" as site_name, "Sober (May 22, 2026)" as title, GitHub link in embed page footer
 - **Short share URLs** — 6-char IDs (`cdn.example.com/t/abc123`)
 - **AAC audio by default** — recordings use AAC so previews play instantly without transcode
@@ -25,7 +25,7 @@
 - **Debounced hotkey** — prevents double-fires from key repeat
 
 ## UI
-
+- **Revamped UI** (Not fully AI made now)
 - **Migrated to plain Svelte 5 + Vite** (removed SvelteKit, simpler build)
 - **New sidebar icons** — Lucide-style SVGs (grid, upload, bookmark, sliders)
 - **Fixed tab switching artifacts** — forced repaint on webkit2gtk transparent backgrounds
@@ -42,17 +42,12 @@
 
 ## Fixes
 
-- Video playback in editor (local HTTP server approach — works reliably on webkit2gtk)
+- Video playback in editor (asset protocol URL encoding fixed)
 - R2 upload crash (`behavior-version-latest` feature flag)
 - Hide/close buttons (added window permissions to capabilities)
-- Hyprland Lua bind paths updated for renamed project directory
 - Removed stale SvelteKit files and routes
-- Settings no longer overwrite while typing (refresh skips settings tab)
-- Trimmed clips always output AAC audio (playable in browsers/Discord)
-- Uploads auto-remux opus→AAC before uploading (embeds always work)
-- White dropdown fix (`appearance: none` on select elements)
-- Delete button added to temporary uploads tab
-- Theme/appearance settings persist across restarts (localStorage)
-- Audio codec now configurable in Settings (aac / opus / flac)
-- GTK scrollbar hidden (no ugly system scrollbar)
-- Tab switching render artifacts fixed (opaque main background)
+
+
+## Important
+
+- Balls

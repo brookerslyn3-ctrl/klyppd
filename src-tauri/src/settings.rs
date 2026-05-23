@@ -65,6 +65,8 @@ pub fn load() -> Result<AppSettings, Error> {
         save(&s)?;
         return Ok(s);
     }
+    // FIXME: if user hand-edits the JSON and adds a typo, this silently falls back to defaults
+    // should probably warn or show a toast in the UI
     Ok(serde_json::from_str(&std::fs::read_to_string(p)?)?)
 }
 

@@ -246,6 +246,9 @@ fn strip_video_ext(key: &str) -> &str {
 
 /// If the file has non-AAC audio, remux to a temp file with AAC. Returns path to use for upload.
 fn ensure_aac(path: &str) -> String {
+    // FIXME: this spawns ffprobe + potentially ffmpeg on every upload
+    // should cache the result per file hash or check once on scan_clips
+
     // Check audio codec
     let out = std::process::Command::new("ffprobe")
         .args(["-v", "quiet", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", path])
@@ -255,6 +258,9 @@ fn ensure_aac(path: &str) -> String {
     if codec == "aac" {
         return path.to_string();
     }
+
+    // TODO: consider supporting passthrough for opus if user explicitly chose it
+    // and just warn in the UI that Discord embeds won't work
 
     // Remux with AAC audio
     let tmp = format!("{}.upload.mp4", path);
